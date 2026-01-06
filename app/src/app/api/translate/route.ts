@@ -1,12 +1,14 @@
+import "@/lib/add-proxy";
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
-import { estimateTokens, tokensToCost } from "@/lib/tokens";
+// import { tokensToCost } from "@/lib/tokens";
 import { getModelById } from "@/lib/models";
 import { readDocumentMetadata } from "@/lib/document-storage";
-import { formatLogDetails, logger } from "@/lib/logger";
+// import { formatLogDetails, logger } from "@/lib/logger";
+// import { StreamSummary } from "@/lib/stream-summary";
 
 type TranslateRequestBody = {
   documentId: string;
@@ -14,69 +16,8 @@ type TranslateRequestBody = {
   targetLanguage: "en" | "zh";
 };
 
-const CHUNK_SIZE = 600;
-
 function languageLabel(code: "en" | "zh") {
   return code === "zh" ? "Simplified Chinese" : "English";
-}
-
-async function translateWithModel(model: ReturnType<typeof getModelById>, text: string, language: "en" | "zh") {
-  const provider =
-    model.providerType === "anthropic"
-      ? anthropic(model.aiModelId)
-      : google(model.aiModelId);
-
-  const result = streamText({
-    model: provider,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a professional translator. Preserve technical accuracy, attend to idioms, and keep formatting aligned with the provided text.",
-      },
-      {
-        role: "user",
-        content: `Translate the following document into ${languageLabel(language)}. Keep the tone neutral and describe cultural notes only when helpful:\n\n${text}`,
-      },
-    ],
-    temperature: 0.1,
-  });
-
-  const rendered = await result.text();
-  if (!rendered) {
-    throw new Error("The AI model returned no content.");
-  }
-
-  return rendered;
-}
-
-type TranslationSummary = {
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  durationMs: number;
-  pages: number;
-  model: string;
-  targetLanguage: "en" | "zh";
-};
-
-function createTranslationStream(translation: string, summary: TranslationSummary) {
-  const encoder = new TextEncoder();
-
-  return new ReadableStream({
-    async start(controller) {
-      for (let i = 0; i < translation.length; i += CHUNK_SIZE) {
-        const chunk = translation.slice(i, i + CHUNK_SIZE);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "translation", chunk })}\n\n`));
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "summary", summary })}\n\n`)
-      );
-      controller.close();
-    },
-  });
 }
 
 export async function POST(req: Request) {
@@ -102,49 +43,48 @@ export async function POST(req: Request) {
 
     const buffer = await readFile(metadata.filePath);
     const sourceText = buffer.toString("utf-8");
+    console.log('source loaded')
+    // console.log('sourceText', sourceText);
     const pages = metadata.pages ?? Math.max(1, Math.ceil(sourceText.length / 2000));
-
     const startTime = Date.now();
+    const textChunks: string[] = [];
 
-    const translation = await translateWithModel(model, sourceText, targetLanguage);
-    const inputTokens = estimateTokens(sourceText);
-    const outputTokens = estimateTokens(translation);
-    const translationCost =
-      tokensToCost(inputTokens, model.inputPricePerMillion) +
-      tokensToCost(outputTokens, model.outputPricePerMillion);
-    const durationMs = Date.now() - startTime;
+    const provider =
+      model.providerType === "anthropic"
+        ? anthropic(model.aiModelId)
+        : google(model.aiModelId);
 
-    const summary = {
-      inputTokens,
-      outputTokens,
-      cost: Number(translationCost.toFixed(6)),
-      durationMs,
-      pages,
-      model: model.label,
-      targetLanguage,
-    };
+    console.log(modelId)
+    const result = streamText({
+      model: provider,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a professional translator. Preserve technical accuracy, attend to idioms, and keep formatting aligned with the provided text.",
+        },
+        {
+          role: "user",
+          content: `Translate the following document into ${languageLabel(targetLanguage)}. Keep the tone neutral and describe cultural notes only when helpful:\n\n${sourceText}`,
+        },
+      ],
+      temperature: 0.1,
+      abortSignal: req.signal,
 
-    logger.info(
-      {
-        documentId,
-        modelId,
-        ...summary,
-        details: formatLogDetails({
-          documentId,
-          modelId,
-          ...summary,
-        }),
-      },
-      "translation completed"
-    );
+    });
 
-    const stream = createTranslationStream(translation, summary);
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
+    return result.toUIMessageStreamResponse({
+      messageMetadata: ({ part }) => {
+        if (part.type === "finish") {
+          return {
+            time: (Date.now() - startTime) / 1000,
+            totalTokens: part.totalUsage.totalTokens,
+            inputTokens: part.totalUsage.inputTokens,
+            outputTokens: part.totalUsage.outputTokens,
+            reasoningTokens: part.totalUsage.reasoningTokens,
+            urlTokens: (part.totalUsage.totalTokens ?? 0) - (part.totalUsage.inputTokens ?? 0) - (part.totalUsage.outputTokens ?? 0) - (part.totalUsage.reasoningTokens ?? 0),
+          };
+        }
       },
     });
   } catch (error) {

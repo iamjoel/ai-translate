@@ -7,7 +7,7 @@ function getGoogleClient() {
     return aiClient;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
     return null;
   }
@@ -23,7 +23,7 @@ export async function countGoogleTokens(model: string, text: string) {
   }
 
   const response = await client.models.countTokens({
-    model: 'gemini-2.5-flash',
+    model,
     contents: text,
   });
 

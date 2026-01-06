@@ -1,10 +1,10 @@
+import "@/lib/add-proxy";
 import { NextResponse } from "next/server";
-import { countAnthropicTokens } from "@/lib/anthropic";
 import { tokensToCost } from "@/lib/tokens";
 import { getModelById, ModelEntry } from "@/lib/models";
 import { formatLogDetails, logger } from "@/lib/logger";
 import { persistDocumentMetadata, storeDocument } from "@/lib/document-storage";
-import { countGoogleTokens } from "@/lib/google";
+import { estimateTokensForModel } from "@/lib/token-estimation";
 
 export const runtime = "nodejs";
 
@@ -12,24 +12,6 @@ type UploadPayload = {
   targetLanguage: "en" | "zh";
   modelId: ModelEntry["id"];
 };
-
-async function estimateTokensForModel(model: ModelEntry, text: string) {
-  const tokens = await countGoogleTokens(model.aiModelId, text);
-  return tokens ?? 0;
-  if (model.providerType === "anthropic") {
-    const systemPrompt =
-      "You are a professional translator. Preserve technical accuracy, attend to idioms, and keep formatting aligned with the provided text.";
-    const tokens = await countAnthropicTokens(model.aiModelId, text, systemPrompt);
-    return tokens;
-  }
-
-  if (model.providerType === "google") {
-    const tokens = await countGoogleTokens(model.aiModelId, text);
-    return tokens;
-  }
-
-  return 0;
-}
 
 export async function POST(req: Request) {
   try {
@@ -48,7 +30,7 @@ export async function POST(req: Request) {
     }
 
     const targetLanguage = (formData.get("targetLanguage") as UploadPayload["targetLanguage"]) ?? "en";
-    const modelId = (formData.get("modelId") as UploadPayload["modelId"]) ?? "claude-haiku-4-5";
+    const modelId = (formData.get("modelId") as UploadPayload["modelId"]) ?? "gemini-2.5-flash";
     const model = getModelById(modelId);
 
     if (!model) {

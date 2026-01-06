@@ -1,10 +1,11 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { createParser } from "eventsource-parser";
+import { parseJsonEventStream, readUIMessageStream, uiMessageChunkSchema } from "ai";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { formatTokens } from "@/lib/tokens";
 import { ModelEntry, MODEL_CATALOG } from "@/lib/models";
+import type { StreamSummary } from "@/lib/stream-summary";
 
 type UploadResponse = {
   documentId: string;
@@ -17,16 +18,6 @@ type UploadResponse = {
   model: Pick<ModelEntry, "id" | "label" | "provider" | "description" | "inputPricePerMillion" | "outputPricePerMillion">;
   mimeType: string | null;
   extension: string;
-};
-
-type StreamSummary = {
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  durationMs: number;
-  pages: number;
-  model: string;
-  targetLanguage: "en" | "zh";
 };
 
 const LANGUAGE_OPTIONS = [
@@ -42,7 +33,7 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 
 export default function TranslationStudio() {
   const [targetLanguage, setTargetLanguage] = useState<"en" | "zh">("en");
-  const [selectedModelId, setSelectedModelId] = useState<ModelEntry["id"]>("claude-haiku-4-5");
+  const [selectedModelId, setSelectedModelId] = useState<ModelEntry["id"]>("gemini-2.5-flash");
   const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [documentMeta, setDocumentMeta] = useState<UploadResponse | null>(null);
@@ -60,6 +51,66 @@ export default function TranslationStudio() {
     () => MODEL_CATALOG.find((model) => model.id === selectedModelId)!,
     [selectedModelId]
   );
+
+  useEffect(() => {
+    if (!documentMeta || documentMeta.model.id === selectedModelId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const refreshEstimates = async () => {
+      try {
+        const response = await fetch("/api/documents/estimate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            documentId: documentMeta.documentId,
+            modelId: selectedModelId,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.error ?? "Unable to refresh token estimates.");
+        }
+
+        const payload = (await response.json()) as {
+          estimatedTokens: number;
+          estimatedCost: number;
+          model: UploadResponse["model"];
+        };
+
+        setDocumentMeta((prev) =>
+          prev
+            ? {
+              ...prev,
+              estimatedTokens: payload.estimatedTokens,
+              estimatedCost: payload.estimatedCost,
+              model: payload.model,
+            }
+            : prev
+        );
+      } catch (estimateError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if ((estimateError as Error).name === "AbortError") {
+          return;
+        }
+
+        setError((estimateError as Error).message);
+      }
+    };
+
+    refreshEstimates();
+
+    return () => {
+      controller.abort();
+    };
+  }, [documentMeta?.documentId, documentMeta?.model.id, selectedModelId]);
 
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     setError(null);
@@ -132,32 +183,45 @@ export default function TranslationStudio() {
         throw new Error(payload?.error ?? "Translation failed.");
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
+      if (!response.body) {
         throw new Error("Stream not available.");
       }
 
-      const decoder = new TextDecoder();
-      const parser = createParser((event) => {
-        if (event.type !== "event") {
-          return;
-        }
-
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload?.type === "translation") {
-            setTranslationText((prev) => prev + payload.chunk);
-          } else if (payload?.type === "summary") {
-            setSummary(payload.summary as StreamSummary);
-          }
-        } catch {
-          // ignore malformed events
-        }
+      const parsedStream = parseJsonEventStream({
+        stream: response.body,
+        schema: uiMessageChunkSchema,
       });
 
-      let chunk;
-      while (!(chunk = await reader.read()).done) {
-        parser.feed(decoder.decode(chunk.value, { stream: true }));
+      const chunkStream = parsedStream.pipeThrough(
+        new TransformStream({
+          transform(result, controller) {
+            if (!result.success) {
+              controller.error(result.error ?? new Error("Failed to parse event stream."));
+              return;
+            }
+
+            controller.enqueue(result.value);
+          },
+        })
+      );
+
+      let latestText = "";
+      for await (const message of readUIMessageStream({ stream: chunkStream })) {
+        const messageText = (message.parts ?? [])
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("");
+
+        if (messageText && messageText !== latestText) {
+          latestText = messageText;
+          setTranslationText(messageText);
+        }
+
+        (message.parts ?? []).forEach((part) => {
+          if (part.type === "data-translation-summary" && part.data) {
+            setSummary(part.data as StreamSummary);
+          }
+        });
       }
     } catch (translateError) {
       setError((translateError as Error).message);
@@ -232,7 +296,7 @@ export default function TranslationStudio() {
     ? translating
       ? "Streaming translation..."
       : "Translation ready. Review the stream below."
-          : "Upload a TXT file to preview token estimates.";
+    : "Upload a TXT file to preview token estimates.";
 
   const estimatedCostDisplay = documentMeta
     ? currencyFormatter.format(documentMeta.estimatedCost)
@@ -256,11 +320,10 @@ export default function TranslationStudio() {
                 key={option.code}
                 type="button"
                 onClick={() => setTargetLanguage(option.code)}
-                className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
-                  targetLanguage === option.code
+                className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${targetLanguage === option.code
                     ? "border-slate-900 bg-slate-900 text-white"
                     : "border-slate-200 text-slate-600 hover:border-slate-400"
-                }`}
+                  }`}
               >
                 {option.label}
               </button>
