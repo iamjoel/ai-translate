@@ -43,7 +43,6 @@ export async function POST(req: Request) {
 
     const buffer = await readFile(metadata.filePath);
     const sourceText = buffer.toString("utf-8");
-    console.log('source loaded')
     // console.log('sourceText', sourceText);
     const pages = metadata.pages ?? Math.max(1, Math.ceil(sourceText.length / 2000));
     const startTime = Date.now();

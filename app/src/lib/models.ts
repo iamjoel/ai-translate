@@ -31,7 +31,7 @@ export const MODEL_CATALOG: ModelEntry[] = [
     inputPricePerMillion: 1,
     outputPricePerMillion: 5,
     providerType: "anthropic",
-    aiModelId: "claude-haiku-4.5",
+    aiModelId: "claude-haiku-4-5",
   },
   {
     id: "claude-sonnet-4-5",
@@ -43,7 +43,7 @@ export const MODEL_CATALOG: ModelEntry[] = [
     inputPricePerMillion: 3,
     outputPricePerMillion: 15,
     providerType: "anthropic",
-    aiModelId: "claude-sonnet-4.5",
+    aiModelId: "claude-sonnet-4-5",
   },
   {
     id: "claude-opus-4-5",
@@ -55,7 +55,7 @@ export const MODEL_CATALOG: ModelEntry[] = [
     inputPricePerMillion: 5,
     outputPricePerMillion: 25,
     providerType: "anthropic",
-    aiModelId: "claude-opus-4.5",
+    aiModelId: "claude-opus-4-5",
   },
   {
     id: "gemini-2.5-flash",

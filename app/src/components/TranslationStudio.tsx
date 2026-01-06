@@ -33,7 +33,7 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 
 export default function TranslationStudio() {
   const [targetLanguage, setTargetLanguage] = useState<"en" | "zh">("en");
-  const [selectedModelId, setSelectedModelId] = useState<ModelEntry["id"]>("gemini-2.5-flash");
+  const [selectedModelId, setSelectedModelId] = useState<ModelEntry["id"]>("claude-haiku-4-5"); // gemini-2.5-flash claude-haiku-4-5
   const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [documentMeta, setDocumentMeta] = useState<UploadResponse | null>(null);
@@ -321,8 +321,8 @@ export default function TranslationStudio() {
                 type="button"
                 onClick={() => setTargetLanguage(option.code)}
                 className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${targetLanguage === option.code
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 text-slate-600 hover:border-slate-400"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 text-slate-600 hover:border-slate-400"
                   }`}
               >
                 {option.label}

@@ -28,7 +28,7 @@ pnpm dev
 | `TRANSLATION_MODEL` | Optional override of the OpenAI model name (e.g., `gpt-4-turbo-preview`). | ❌ |
 | `LOG_LEVEL` | Controls `pino` verbosity (`info` by default). | ❌ |
 | `LOG_FILE_PATH` | Output file for `pino` JSON logs (default `./logs/app.log`). | ❌ |
-| `ANTHROPIC_API_KEY` | Required for Anthropic-based Claude models (`claude-haiku-4.5`, `claude-sonnet-4.5`, `claude-opus-4.5`). | ✅ |
+| `ANTHROPIC_API_KEY` | Required for Anthropic-based Claude models (`claude-haiku-4-5`, `claude-sonnet-4-5`, `claude-opus-4-5`). | ✅ |
 | `GOOGLE_API_KEY` or `GOOGLE_APPLICATION_CREDENTIALS` | Needed for Google Gemini models; set whichever credential type the provider integration requires. | ✅ |
 | `GEMINI_API_KEY` | Required when counting tokens with `@google/genai` for Gemini models in the upload preview. | ✅ |
 

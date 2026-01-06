@@ -16,17 +16,21 @@ function getAnthropicClient() {
   return client;
 }
 
-export async function countAnthropicTokens(model: string, text: string, systemPrompt?: string) {
+export async function countAnthropicTokens(model: string, text: string) {
   const anthropicClient = getAnthropicClient();
   if (!anthropicClient) {
     return null;
   }
+  let response;
+  try {
+    response = await anthropicClient.messages.countTokens({
+      model,
+      system: "You are a professional translator.",
+      messages: [{ role: "user", content: text }],
+    });
+  } catch (e) {
+    console.error("Error counting Anthropic tokens:", e);
+  }
 
-  const response = await anthropicClient.messages.countTokens({
-    model,
-    system: systemPrompt ?? "You are a professional translator.",
-    messages: [{ role: "user", content: text }],
-  });
-
-  return response.input_tokens ?? null;
+  return response?.input_tokens ?? null;
 }
