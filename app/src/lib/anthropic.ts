@@ -16,7 +16,7 @@ function getAnthropicClient() {
   return client;
 }
 
-export async function countAnthropicTokens(model: string, text: string) {
+export async function countAnthropicTokens(model: string, text: string, systemPrompt: string) {
   const anthropicClient = getAnthropicClient();
   if (!anthropicClient) {
     return null;
@@ -25,7 +25,7 @@ export async function countAnthropicTokens(model: string, text: string) {
   try {
     response = await anthropicClient.messages.countTokens({
       model,
-      system: "You are a professional translator.",
+      system: systemPrompt,
       messages: [{ role: "user", content: text }],
     });
   } catch (e) {

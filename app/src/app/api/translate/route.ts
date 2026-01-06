@@ -1,14 +1,22 @@
 import "@/lib/add-proxy";
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { streamText } from "ai";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  streamText,
+} from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
-// import { tokensToCost } from "@/lib/tokens";
+import { tokensToCost } from "@/lib/tokens";
 import { getModelById } from "@/lib/models";
-import { readDocumentMetadata } from "@/lib/document-storage";
-// import { formatLogDetails, logger } from "@/lib/logger";
-// import { StreamSummary } from "@/lib/stream-summary";
+import { persistTranslatedDocument, readDocumentMetadata } from "@/lib/document-storage";
+import { formatLogDetails, logger } from "@/lib/logger";
+import { StreamSummary } from "@/lib/stream-summary";
+import { estimateTokensForModel } from "@/lib/token-estimation";
+import { translatePrompt } from "./config";
+
+export const runtime = "nodejs";
 
 type TranslateRequestBody = {
   documentId: string;
@@ -26,7 +34,10 @@ export async function POST(req: Request) {
     const { documentId, modelId, targetLanguage } = body;
 
     if (!documentId || !modelId) {
-      return NextResponse.json({ error: "Missing document or model selection." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing document or model selection." },
+        { status: 400 }
+      );
     }
 
     const model = getModelById(modelId);
@@ -38,12 +49,14 @@ export async function POST(req: Request) {
     const metadata = await readDocumentMetadata(documentId);
 
     if (!metadata?.filePath) {
-      return NextResponse.json({ error: "Document metadata missing." }, { status: 404 });
+      return NextResponse.json(
+        { error: "Document metadata missing." },
+        { status: 404 }
+      );
     }
 
     const buffer = await readFile(metadata.filePath);
     const sourceText = buffer.toString("utf-8");
-    // console.log('sourceText', sourceText);
     const pages = metadata.pages ?? Math.max(1, Math.ceil(sourceText.length / 2000));
     const startTime = Date.now();
     const textChunks: string[] = [];
@@ -53,37 +66,109 @@ export async function POST(req: Request) {
         ? anthropic(model.aiModelId)
         : google(model.aiModelId);
 
-    console.log(modelId)
     const result = streamText({
       model: provider,
       messages: [
         {
           role: "system",
-          content:
-            "You are a professional translator. Preserve technical accuracy, attend to idioms, and keep formatting aligned with the provided text.",
+          content: translatePrompt.system,
         },
         {
           role: "user",
-          content: `Translate the following document into ${languageLabel(targetLanguage)}. Keep the tone neutral and describe cultural notes only when helpful:\n\n${sourceText}`,
+          content: translatePrompt.buildUserPrompt(
+            languageLabel(targetLanguage),
+            sourceText
+          ),
         },
       ],
       temperature: 0.1,
       abortSignal: req.signal,
-
+      onChunk({ chunk }) {
+        if (chunk.type === "text" && typeof chunk.text === "string") {
+          textChunks.push(chunk.text);
+        } else if (chunk.type === "text-delta" && typeof chunk.delta === "string") {
+          textChunks.push(chunk.delta);
+        }
+      },
     });
 
-    return result.toUIMessageStreamResponse({
-      messageMetadata: ({ part }) => {
-        if (part.type === "finish") {
-          return {
-            time: (Date.now() - startTime) / 1000,
-            totalTokens: part.totalUsage.totalTokens,
-            inputTokens: part.totalUsage.inputTokens,
-            outputTokens: part.totalUsage.outputTokens,
-            reasoningTokens: part.totalUsage.reasoningTokens,
-            urlTokens: (part.totalUsage.totalTokens ?? 0) - (part.totalUsage.inputTokens ?? 0) - (part.totalUsage.outputTokens ?? 0) - (part.totalUsage.reasoningTokens ?? 0),
-          };
+    const stream = createUIMessageStream({
+      async execute({ writer }) {
+        await writer.merge(result.toUIMessageStream());
+        const translationText = textChunks.join("");
+
+        const safeEstimate = async (text: string) => {
+          try {
+            return await estimateTokensForModel(model, text);
+          } catch (estimateError) {
+            logger.debug(
+              { error: estimateError, documentId, modelId },
+              "token estimation failed"
+            );
+            return 0;
+          }
+        };
+
+        const inputTokens = await safeEstimate(sourceText);
+        const outputTokens = await safeEstimate(translationText);
+        const translationCost =
+          tokensToCost(inputTokens, model.inputPricePerMillion) +
+          tokensToCost(outputTokens, model.outputPricePerMillion);
+        const durationMs = Date.now() - startTime;
+
+        try {
+          const baseName =
+            metadata.name?.replace(/\.[^.]+$/, "") ?? `translation-${documentId}`;
+          const translationName = `${baseName}-${targetLanguage}.txt`;
+          const translationBuffer = Buffer.from(translationText, "utf-8");
+          await persistTranslatedDocument(
+            documentId,
+            translationBuffer,
+            translationName,
+            "text/plain"
+          );
+        } catch (translationStorageError) {
+          logger.error(
+            { error: translationStorageError, documentId },
+            "failed to persist translated document"
+          );
         }
+
+        const summary: StreamSummary = {
+          inputTokens,
+          outputTokens,
+          cost: Number(translationCost.toFixed(6)),
+          durationMs,
+          pages,
+          model: model.label,
+          targetLanguage,
+        };
+
+        logger.info(
+          {
+            documentId,
+            modelId,
+            ...summary,
+            details: formatLogDetails({
+              documentId,
+              modelId,
+              ...summary,
+            }),
+          },
+          "translation completed"
+        );
+
+        await writer.write({
+          type: "data-translation-summary",
+          data: summary,
+        });
+      },
+    });
+
+    return createUIMessageStreamResponse({
+      stream,
+      headers: {
+        "Cache-Control": "no-cache, no-transform",
       },
     });
   } catch (error) {

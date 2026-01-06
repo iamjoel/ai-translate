@@ -79,7 +79,7 @@ export const MODEL_CATALOG: ModelEntry[] = [
     inputPricePerMillion: 0.5,
     outputPricePerMillion: 3,
     providerType: "google",
-    aiModelId: "gemini-3-flash",
+    aiModelId: "gemini-3-flash-preview",
   },
   {
     id: "gemini-3-pro",
@@ -91,7 +91,7 @@ export const MODEL_CATALOG: ModelEntry[] = [
     inputPricePerMillion: 2,
     outputPricePerMillion: 12,
     providerType: "google",
-    aiModelId: "gemini-3-pro",
+    aiModelId: "gemini-3-pro-preview",
   },
 ];
 

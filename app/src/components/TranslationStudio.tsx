@@ -2,7 +2,6 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { parseJsonEventStream, readUIMessageStream, uiMessageChunkSchema } from "ai";
-import { PDFDocument, StandardFonts } from "pdf-lib";
 import { formatTokens } from "@/lib/tokens";
 import { ModelEntry, MODEL_CATALOG } from "@/lib/models";
 import type { StreamSummary } from "@/lib/stream-summary";
@@ -231,65 +230,37 @@ export default function TranslationStudio() {
   };
 
   const handleDownload = async () => {
-    if (!translationText) {
+    if (!documentMeta?.documentId || !translationText) {
       return;
     }
 
-    const doc = await PDFDocument.create();
-    const font = await doc.embedFont(StandardFonts.Helvetica);
-    const pageSize = { width: 612, height: 792 };
-    let page = doc.addPage(pageSize);
-    const margin = 48;
-    const lineHeight = 18;
-    let cursorY = pageSize.height - margin;
-    const textLines = translationText.split("\n");
+    try {
+      setError(null);
+      const response = await fetch(
+        `/api/documents/download?documentId=${encodeURIComponent(documentMeta.documentId)}`
+      );
 
-    const drawLine = (line: string) => {
-      if (cursorY < margin) {
-        page = doc.addPage(pageSize);
-        cursorY = pageSize.height - margin;
-      }
-      page.drawText(line, {
-        x: margin,
-        y: cursorY,
-        size: 12,
-        font,
-        maxWidth: pageSize.width - margin * 2,
-      });
-      cursorY -= lineHeight;
-    };
-
-    textLines.forEach((line) => {
-      if (!line.trim()) {
-        cursorY -= lineHeight;
-        return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? "Unable to download translation.");
       }
 
-      const words = line.split(" ");
-      let currentLine = "";
-      words.forEach((word) => {
-        const trial = currentLine ? `${currentLine} ${word}` : word;
-        if (font.widthOfTextAtSize(trial, 12) > pageSize.width - margin * 2) {
-          drawLine(currentLine);
-          currentLine = word;
-        } else {
-          currentLine = trial;
-        }
-      });
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      const filename =
+        filenameMatch?.[1] ??
+        `${documentMeta.name?.replace(/\.[^.]+$/, "") ?? "translation"}.txt`;
 
-      if (currentLine) {
-        drawLine(currentLine);
-      }
-    });
-
-    const pdfBytes = await doc.save();
-    const blob = new Blob([pdfBytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${documentMeta?.name?.replace(/\.[^.]+$/, "") ?? "translation"}.pdf`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError((downloadError as Error).message);
+    }
   };
 
   const statusMessage = translationText
@@ -422,14 +393,14 @@ export default function TranslationStudio() {
               onClick={handleDownload}
               className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-900 hover:text-slate-900 dark:border-slate-700 dark:text-slate-200"
             >
-              Download PDF
+              Download TXT
             </button>
           </div>
         </div>
 
         <div
           ref={translationRef}
-          className="mt-5 min-h-[220px] rounded-3xl border border-slate-200 bg-slate-50/80 p-5 text-sm leading-relaxed text-slate-900 shadow-inner dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100"
+          className="mt-5 max-h-[420px] overflow-y-auto rounded-3xl border border-slate-200 bg-slate-50/80 p-5 text-sm leading-relaxed text-slate-900 shadow-inner dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100"
         >
           {translationText ? (
             <div className="whitespace-pre-line">{translationText}</div>

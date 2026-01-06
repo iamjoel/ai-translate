@@ -22,6 +22,7 @@ export interface DocumentMetadata {
   estimatedTokens?: number;
   estimatedCost?: number;
   pages?: number;
+  translationDocument?: StoredDocument;
 }
 
 const UPLOAD_DIR = resolve(process.cwd(), "uploads");
@@ -77,4 +78,22 @@ export async function storeDocument(buffer: Buffer, filename: string, mimeType: 
     mimeType,
     uploadedAt: new Date().toISOString(),
   } satisfies StoredDocument;
+}
+
+export async function persistTranslatedDocument(
+  documentId: string,
+  buffer: Buffer,
+  filename: string,
+  mimeType: string | null
+) {
+  const translation = await storeDocument(buffer, filename, mimeType);
+  const metadata = await readDocumentMetadata(documentId);
+
+  if (!metadata) {
+    return translation;
+  }
+
+  metadata.translationDocument = translation;
+  await persistDocumentMetadata(metadata);
+  return translation;
 }

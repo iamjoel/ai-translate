@@ -1,13 +1,11 @@
 import { ModelEntry } from "./models";
 import { countAnthropicTokens } from "./anthropic";
 import { countGoogleTokens } from "./google";
-
-const TRANSLATION_SYSTEM_PROMPT =
-  "You are a professional translator. Preserve technical accuracy, attend to idioms, and keep formatting aligned with the provided text.";
+import { translatePrompt } from "../app/api/translate/config";
 
 export async function estimateTokensForModel(model: ModelEntry, text: string) {
   if (model.providerType === "anthropic") {
-    const tokens = await countAnthropicTokens(model.aiModelId, text, TRANSLATION_SYSTEM_PROMPT);
+    const tokens = await countAnthropicTokens(model.aiModelId, text, translatePrompt.system);
     return tokens ?? 0;
   }
 
